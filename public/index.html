@@ -153,6 +153,12 @@ function getRange() {
     const from = new Date(); from.setDate(from.getDate() - 3);
     r = { preset: "3", from: dstr(from), to: dstr(new Date()) };
   }
+  // Presets are relative to today: recompute the dates every time so a saved
+  // "Today only" / "Today + last 3 days" doesn't go stale on later days.
+  if (["0","3","6","13"].includes(r.preset)) {
+    const from = new Date(); from.setDate(from.getDate() - parseInt(r.preset, 10));
+    r = { preset: r.preset, from: dstr(from), to: dstr(new Date()) };
+  }
   return r;
 }
 function setRange(r) { try { localStorage.setItem("cs_range", JSON.stringify(r)); } catch(e){} }
