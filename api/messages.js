@@ -30,6 +30,7 @@ async function getToken() {
 const INTERNAL_DOMAINS = ['centralpharma.com', 'central-pharma.com'];
 const INBOX_SELECT = 'id,subject,from,toRecipients,receivedDateTime,importance,bodyPreview,categories,flag,webLink,conversationId';
 const SENT_SELECT = 'conversationId,sentDateTime,from,sender';
+const REPLY_SELECT = 'conversationId,receivedDateTime,from';
 
 async function pageAll(startUrl, token, maxPages) {
   const items = [];
@@ -78,7 +79,13 @@ export default async function handler(req, res) {
     const sentUrl = `${base}/mailFolders/sentitems/messages?$filter=${encodeURIComponent(sentFilter)}` +
       `&$orderby=sentDateTime desc&$select=${SENT_SELECT}&$top=100`;
 
-    const [inbox, sent] = await Promise.all([pageAll(inboxUrl, token, 20), pageAll(sentUrl, token, 10)]);
+    // Internal replies can land AFTER the selected window ends (e.g. viewing "Yesterday" when the
+    // rep replied this morning), so also scan Inbox arrivals from the window end onwards.
+    const afterUrl = `${base}/mailFolders/inbox/messages?$filter=${encodeURIComponent(`receivedDateTime ge ${to.toISOString()}`)}` +
+      `&$orderby=receivedDateTime desc&$select=${REPLY_SELECT}&$top=100`;
+    const afterP = to < new Date() ? pageAll(afterUrl, token, 5) : Promise.resolve({ items: [] });
+
+    const [inbox, sent, after] = await Promise.all([pageAll(inboxUrl, token, 20), pageAll(sentUrl, token, 10), afterP]);
 
     // conversationId -> list of replies { at, by }  (by = '' when sent-as the shared mailbox)
     const replies = new Map();
@@ -96,7 +103,7 @@ export default async function handler(req, res) {
     // Reps usually reply from their OWN mailboxes with the CS mailbox copied in, so the
     // reply arrives in the CS Inbox. Count Inbox messages from internal senders as replies
     // to earlier messages in the same conversation.
-    for (const m of inbox.items) {
+    for (const m of [...inbox.items, ...after.items]) {
       const addr = String(m.from?.emailAddress?.address || '').toLowerCase();
       const dom = addr.split('@')[1] || '';
       if (!addr || addr === mailbox) continue;
