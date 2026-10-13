@@ -1,0 +1,9 @@
+{
+  "name": "cs-triage-dashboard",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22.x" },
+  "dependencies": {
+    "@vercel/functions": "3.9.8"
+  }
+}

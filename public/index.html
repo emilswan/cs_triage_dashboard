@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Customer Services Triage Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:#f6f7f9; color:#1a1d21; font-family:"Segoe UI",system-ui,-apple-system,sans-serif; font-size:14px; }
+  h1 { font-size:18px; margin:0; }
+  .sub { color:#6b7280; font-size:12px; margin-top:2px; }
+  .topbar { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  #status { font-size:12px; color:#6b7280; text-align:right; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:14px; }
+  .kpi { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:12px 14px; }
+  .kpi .num { font-size:26px; font-weight:700; line-height:1.1; }
+  .kpi .lbl { font-size:12px; color:#6b7280; margin-top:2px; }
+  .kpi.alarm { border-color:#dc2626; background:#fef2f2; }
+  .kpi.alarm .num { color:#dc2626; }
+  .kpi.ok { border-color:#16a34a33; }
+  .panel { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px; margin-bottom:14px; }
+  .panel h2 { font-size:14px; margin:0 0 10px; display:flex; align-items:center; gap:8px; }
+  .charts { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+  @media (max-width:700px){ .charts { grid-template-columns:1fr; } }
+  .chartbox { position:relative; height:200px; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .p-critical { background:#dc2626; color:#fff; }
+  .p-high { background:#f59e0b; color:#fff; }
+  .p-routine { background:#e0e7ff; color:#3730a3; }
+  .p-low { background:#e5e7eb; color:#6b7280; }
+  .s-unassigned { background:#fee2e2; color:#b91c1c; }
+  .s-picked { background:#dcfce7; color:#166534; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; padding:6px 8px; border-bottom:1px solid #e5e7eb; cursor:pointer; user-select:none; white-space:nowrap; }
+  td { padding:7px 8px; border-bottom:1px solid #f1f2f4; vertical-align:top; }
+  tr:hover td { background:#f9fafb; }
+  a { color:#2563eb; text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .subj { font-weight:600; }
+  .prev { color:#6b7280; font-size:12px; max-width:420px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .who { white-space:nowrap; }
+  .age-warn { color:#b91c1c; font-weight:700; }
+  .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  select, input[type=search] { padding:5px 8px; border:1px solid #d1d5db; border-radius:8px; font-size:13px; background:#fff; }
+  .triage-item { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid #f1f2f4; align-items:flex-start; }
+  .triage-item:last-child { border-bottom:none; }
+  .empty { color:#6b7280; font-style:italic; padding:8px 0; }
+  .reason { font-size:12px; color:#92400e; }
+  #err { color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:10px; display:none; margin-bottom:12px; white-space:pre-wrap; }
+  .spinner { display:inline-block; width:12px; height:12px; border:2px solid #d1d5db; border-top-color:#2563eb; border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <h1>Customer Services — Inbox Triage</h1>
+    <div class="sub">customerservice@central-pharma.com · Inbox · <span id="range-label">today + last 3 days</span> · assigned = addressee · picked up = reply sent (or category)</div>
+  </div>
+  <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+    <div style="display:flex;gap:8px;align-items:center;"><div id="status"><span class="spinner"></span>Starting…</div>
+      <button id="reload" style="padding:4px 10px;border:1px solid #d1d5db;border-radius:8px;background:#fff;font-size:12px;cursor:pointer;">Reload</button></div>
+    <div class="filters" style="margin:0;">
+      <select id="d-preset">
+        <option value="3">Today + last 3 days</option>
+        <option value="0">Today only</option>
+        <option value="6">Last 7 days</option>
+        <option value="13">Last 14 days</option>
+        <option value="custom">Custom range…</option>
+      </select>
+      <span id="d-custom" style="display:none;">
+        <input type="date" id="d-from"> <span style="color:#6b7280;">to</span> <input type="date" id="d-to">
+        <button id="d-apply" style="padding:5px 12px;border:1px solid #2563eb;border-radius:8px;background:#2563eb;color:#fff;font-size:13px;cursor:pointer;">Apply</button>
+      </span>
+    </div>
+  </div>
+</div>
+<div id="err"></div>
+
+<div class="kpis">
+  <div class="kpi"><div class="num" id="k-total">–</div><div class="lbl">Incoming messages</div></div>
+  <div class="kpi"><div class="num" id="k-crit">–</div><div class="lbl">Critical</div></div>
+  <div class="kpi alarm"><div class="num" id="k-critun">–</div><div class="lbl">Critical &amp; NOT picked up</div></div>
+  <div class="kpi"><div class="num" id="k-unassigned">–</div><div class="lbl">Awaiting reply (all)</div></div>
+  <div class="kpi ok"><div class="num" id="k-pickup">–</div><div class="lbl">Reply rate</div></div>
+</div>
+
+<div class="panel">
+  <h2>By customer <span class="sub" style="font-weight:normal;">— click a row to filter the message list below</span></h2>
+  <table>
+    <thead><tr>
+      <th>Customer</th><th>Total</th><th>Critical</th><th>High</th><th>Awaiting reply</th><th>Replied by</th>
+    </tr></thead>
+    <tbody id="cust-rows"></tbody>
+  </table>
+</div>
+
+<div class="panel" id="triage-panel">
+  <h2>🚨 Needs attention — critical / high priority with no reply sent yet</h2>
+  <div id="triage-list"><div class="empty">Loading…</div></div>
+</div>
+
+<div class="charts">
+  <div class="panel"><h2>Incoming by day &amp; priority</h2><div class="chartbox"><canvas id="chart-days"></canvas></div></div>
+  <div class="panel"><h2>Replied / picked up per rep</h2><div class="chartbox"><canvas id="chart-reps"></canvas></div></div>
+</div>
+
+<div class="panel">
+  <h2>All incoming messages</h2>
+  <div class="filters">
+    <select id="f-priority"><option value="">All priorities</option><option value="critical">Critical</option><option value="high">High</option><option value="routine">Routine</option><option value="low">Low / automated</option></select>
+    <select id="f-status"><option value="">All statuses</option><option value="unassigned">Awaiting reply</option><option value="picked">Replied / picked up</option></select>
+    <select id="f-customer"><option value="">All customers</option></select>
+    <input type="search" id="f-text" placeholder="Search subject / sender…">
+  </div>
+  <table>
+    <thead><tr>
+      <th data-k="prio">Priority</th><th data-k="received">Received</th><th data-k="age">Age</th>
+      <th data-k="sender">From</th><th data-k="assigned">Assigned to</th><th>Subject</th><th data-k="status">Status</th><th></th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script>
+"use strict";
+let MAILBOX = "customerservice@central-pharma.com";
+const PRIO_ORDER = { critical:0, high:1, routine:2, low:3 };
+const PRIO_LABEL = { critical:"Critical", high:"High", routine:"Routine", low:"Low" };
+let MESSAGES = [];
+let sortKey = "prio", sortAsc = true;
+
+const $ = id => document.getElementById(id);
+const setStatus = (t, spin=true) => { $("status").innerHTML = (spin ? '<span class="spinner"></span>' : "") + t; };
+const showErr = t => { const e=$("err"); e.style.display="block"; e.textContent = t; };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ cache: "no-store", credentials: "same-origin" }, opts || {}));
+  let j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((j && j.error) || ("HTTP " + r.status + " from " + path));
+  return j;
+}
+
+// ---- date range ----
+const dstr = d => d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+function getRange() {
+  let r;
+  try { r = JSON.parse(localStorage.getItem("cs_range") || "null"); } catch(e){ r = null; }
+  if (!r || !r.from || !r.to) {
+    const from = new Date(); from.setDate(from.getDate() - 3);
+    r = { preset: "3", from: dstr(from), to: dstr(new Date()) };
+  }
+  return r;
+}
+function setRange(r) { try { localStorage.setItem("cs_range", JSON.stringify(r)); } catch(e){} }
+function rangeBounds() {
+  const r = getRange();
+  const start = new Date(r.from + "T00:00:00");
+  const end = new Date(r.to + "T00:00:00"); end.setDate(end.getDate() + 1); // exclusive upper bound
+  return { start, end };
+}
+function rangeLabel() {
+  const r = getRange();
+  if (r.preset === "0") return "today only";
+  if (r.preset === "3") return "today + last 3 days";
+  if (r.preset === "6") return "last 7 days";
+  if (r.preset === "13") return "last 14 days";
+  return new Date(r.from + "T00:00:00").toLocaleDateString(undefined,{day:"numeric",month:"short"}) + " – " + new Date(r.to + "T00:00:00").toLocaleDateString(undefined,{day:"numeric",month:"short"});
+}
+
+let TRUNCATED = false;
+async function fetchMessageList() {
+  const { start, end } = rangeBounds();
+  setStatus("Fetching inbox…");
+  const j = await api("/api/messages?from=" + encodeURIComponent(start.toISOString()) + "&to=" + encodeURIComponent(end.toISOString()));
+  if (j.mailbox) MAILBOX = j.mailbox;
+  TRUNCATED = !!j.truncated;
+  return j.messages || [];
+}
+
+// ---- AI triage with rule-based fallback and localStorage cache ----
+const CRIT_WORDS = /\b(urgent|immediat|asap|recall|adverse event|adverse reaction|complaint|critical|escalat|out of stock|stock ?out|shortage|reject(ed|ion)|deviation|contaminat|counterfeit|falsified|line (stop|down)|patient (harm|safety)|serious)\b/i;
+const HIGH_WORDS = /\b(deadline|overdue|late|delay|expedite|priority|approval needed|action required|by (today|tomorrow|eod|cob)|please (confirm|advise) urgently|quality issue)\b/i;
+const LOW_SENDERS = /(noreply|no-reply|planner\.office365|notification|automated|donotreply)/i;
+// Out-of-office / automatic replies are never actionable, whatever words they contain ("if urgent please contact...").
+// Primary signal is the Auto-Submitted header (m.autoReply, set by /api/messages); the subject check is a fallback.
+const AUTO_REPLY_SUBJECT = /^\s*(automatic reply|auto[\s-]?reply|autoreply|out of office(\s+auto[\s-]?reply)?|ooo\b|automatische antwort|abwesenheit|r[ée]ponse automatique|absence du bureau|respuesta autom[aá]tica)\s*[:\-–]/i;
+const isAutoReply = m => !!m.autoReply || AUTO_REPLY_SUBJECT.test(m.subject || "");
+
+function ruleTriage(m) {
+  const t = (m.subject + " " + (m.preview || "")).toLowerCase();
+  if (isAutoReply(m)) return { p:"low", r:"Auto-reply / out of office" };
+  if (LOW_SENDERS.test(m.sender)) return { p:"low", r:"Automated notification" };
+  if (m.importance === "high" || CRIT_WORDS.test(t)) return { p:"critical", r: m.importance==="high" ? "Marked high importance by sender" : "Critical keyword in subject/body" };
+  if (HIGH_WORDS.test(t)) return { p:"high", r:"Time-sensitive wording" };
+  return { p:"routine", r:"" };
+}
+
+function loadTriageCache() { try { return JSON.parse(localStorage.getItem("cs_triage_cache") || "{}"); } catch(e){ return {}; } }
+function saveTriageCache(c) { try { localStorage.setItem("cs_triage_cache", JSON.stringify(c)); } catch(e){} }
+
+async function aiTriage(msgs) {
+  const cache = loadTriageCache();
+  const todo = msgs.filter(m => !cache[m.id] && !isAutoReply(m));
+  let aiEnabled = todo.length > 0;
+  const BATCH = 20;
+  for (let i = 0; i < todo.length; i += BATCH) {
+    const batch = todo.slice(i, i + BATCH);
+    if (aiEnabled) {
+      setStatus("AI triage… " + Math.min(i + BATCH, todo.length) + "/" + todo.length);
+      const items = batch.map((m, j) => ({ n:j, from:m.sender, subject:m.subject, importance:m.importance, preview:(m.preview||"").slice(0,300) }));
+      try {
+        const j = await api("/api/triage", { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ items }) });
+        if (j.enabled === false) aiEnabled = false;
+        for (const a of (j.results || [])) {
+          const m = batch[a.n];
+          if (m && ["critical","high","routine","low"].includes(a.p)) cache[m.id] = { p:a.p, r:a.r || "" };
+        }
+      } catch (e) { console.warn("AI triage batch failed, using rules", e); }
+    }
+    // Rule results are not cached, so AI can classify them once it is switched on
+    for (const m of batch) if (!cache[m.id]) m._rule = ruleTriage(m);
+  }
+  // Rule-based safety net: never let AI downgrade an explicit critical signal
+  for (const m of msgs) {
+    const rule = ruleTriage(m);
+    if (isAutoReply(m)) { m.prio = "low"; m.reason = rule.r; delete m._rule; continue; }
+    let t = cache[m.id] || m._rule || rule;
+    if (rule.p === "critical" && t.p !== "critical" && !LOW_SENDERS.test(m.sender)) t = rule;
+    m.prio = t.p; m.reason = t.r;
+    delete m._rule;
+  }
+  saveTriageCache(cache);
+}
+
+// ---- customer grouping ----
+const CUSTOMER_NAMES = {
+  "healthspan.co.uk": "Healthspan", "piramal.com": "Piramal", "catalent.com": "Catalent",
+  "cyclepharma.com": "Cycle Pharmaceuticals", "ennogen.com": "Ennogen", "halewoodchemicals.com": "Halewood Chemicals",
+  "abbott.com": "Abbott", "merckgroup.com": "Merck", "external.merckgroup.com": "Merck",
+  "lm-manufacturing.co.uk": "LM Manufacturing", "kuehne-nagel.com": "Kuehne+Nagel", "leman-skl.com": "Leman SKL",
+  "wasdell.co.uk": "Wasdell", "vitabiotics.com": "Vitabiotics", "scangl.com": "Scan Global Logistics"
+};
+const INTERNAL_DOMAINS = ["centralpharma.com", "central-pharma.com"];
+const AUTOMATED_DOMAINS = ["planner.office365.com", "odspnotify", "sfdc.net", "sharepointonline.com"];
+function customerFromSender(sender) {
+  const at = String(sender || "").toLowerCase().split("@");
+  if (at.length < 2) return "Unknown";
+  const dom = at[1].trim();
+  if (INTERNAL_DOMAINS.some(d => dom === d || dom.endsWith("." + d))) return "Internal — Central Pharma";
+  if (AUTOMATED_DOMAINS.some(d => dom.includes(d)) || /noreply|no-reply|donotreply/.test(at[0])) return "Automated / system";
+  if (CUSTOMER_NAMES[dom]) return CUSTOMER_NAMES[dom];
+  const known = Object.keys(CUSTOMER_NAMES).find(d => dom.endsWith("." + d) || d.endsWith("." + dom));
+  if (known) return CUSTOMER_NAMES[known];
+  // Generic: second-level label of the domain, capitalised
+  const parts = dom.split(".");
+  let label = parts[0];
+  if (parts.length > 2 && ["co","com","org","net","ac"].includes(parts[parts.length-2])) label = parts[parts.length-3];
+  else if (parts.length >= 2) label = parts[parts.length-2];
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function renderCustomers() {
+  const groups = {};
+  for (const m of MESSAGES) {
+    const g = groups[m.customer] || (groups[m.customer] = { total:0, critical:0, high:0, unassigned:0, reps:{} });
+    g.total++;
+    if (m.prio === "critical") g.critical++;
+    if (m.prio === "high") g.high++;
+    if (m.pickedUp) g.reps[m.rep] = (g.reps[m.rep] || 0) + 1;
+    else if (m.prio !== "low") g.unassigned++;
+  }
+  const names = Object.keys(groups).sort((a,b) =>
+    groups[b].critical - groups[a].critical || groups[b].high - groups[a].high || groups[b].total - groups[a].total);
+  // populate the customer filter, preserving selection
+  const sel = $("f-customer");
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All customers</option>' + names.map(n => '<option value="' + esc(n) + '">' + esc(n) + "</option>").join("");
+  if (names.includes(cur)) sel.value = cur;
+  $("cust-rows").innerHTML = names.map(n => {
+    const g = groups[n];
+    const reps = Object.keys(g.reps).map(r => esc(r) + " (" + g.reps[r] + ")").join(", ") || "—";
+    return "<tr style='cursor:pointer' data-cust='" + esc(n) + "'>" +
+      "<td class='subj'>" + esc(n) + "</td><td>" + g.total + "</td>" +
+      "<td>" + (g.critical ? "<span class='badge p-critical'>" + g.critical + "</span>" : "0") + "</td>" +
+      "<td>" + (g.high ? "<span class='badge p-high'>" + g.high + "</span>" : "0") + "</td>" +
+      "<td>" + (g.unassigned ? "<span class='badge s-unassigned'>" + g.unassigned + "</span>" : "0") + "</td>" +
+      "<td>" + reps + "</td></tr>";
+  }).join("") || "<tr><td colspan='6' class='empty'>No messages in this window.</td></tr>";
+  $("cust-rows").querySelectorAll("tr[data-cust]").forEach(tr => tr.addEventListener("click", () => {
+    sel.value = sel.value === tr.dataset.cust ? "" : tr.dataset.cust;
+    persistFilters(); renderTable();
+    document.querySelector("#rows").closest(".panel").scrollIntoView({ behavior:"smooth" });
+  }));
+}
+
+// ---- rendering ----
+function ageHours(m) { return (Date.now() - new Date(m.received).getTime()) / 36e5; }
+function fmtAge(h) { return h < 1 ? Math.round(h*60) + "m" : h < 24 ? h.toFixed(1) + "h" : (h/24).toFixed(1) + "d"; }
+function fmtWhen(iso) { const d = new Date(iso); return d.toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"}) + " " + d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }
+function prioBadge(p) { return '<span class="badge p-' + p + '">' + PRIO_LABEL[p] + "</span>"; }
+function statusBadge(m) {
+  if (m.replied) return '<span class="badge s-picked">✓ Replied' + (m.rep ? " · " + esc(m.rep) : "") + "</span>";
+  if (m.pickedUp) return '<span class="badge s-picked">✓ ' + esc(m.rep) + "</span>";
+  return '<span class="badge s-unassigned">No reply yet</span>';
+}
+
+function renderKPIs() {
+  const crit = MESSAGES.filter(m => m.prio === "critical");
+  const critUn = crit.filter(m => !m.pickedUp);
+  const actionable = MESSAGES.filter(m => m.prio !== "low");
+  const un = actionable.filter(m => !m.pickedUp);
+  $("k-total").textContent = MESSAGES.length;
+  $("k-crit").textContent = crit.length;
+  $("k-critun").textContent = critUn.length;
+  $("k-unassigned").textContent = un.length;
+  $("k-pickup").textContent = actionable.length ? Math.round((actionable.length - un.length) / actionable.length * 100) + "%" : "–";
+}
+
+function renderTriage() {
+  const list = MESSAGES.filter(m => (m.prio === "critical" || m.prio === "high") && !m.pickedUp)
+    .sort((a,b) => PRIO_ORDER[a.prio] - PRIO_ORDER[b.prio] || new Date(a.received) - new Date(b.received));
+  const el = $("triage-list");
+  if (!list.length) { el.innerHTML = '<div class="empty">✅ Nothing critical waiting — every critical/high item has been picked up.</div>'; return; }
+  el.innerHTML = list.map(m => {
+    const h = ageHours(m);
+    return '<div class="triage-item">' + prioBadge(m.prio) +
+      '<div style="flex:1"><div class="subj">' + esc(m.subject) + '</div>' +
+      '<div class="sub">' + esc(m.sender) + " · " + fmtWhen(m.received) + ' · waiting <span class="' + (h > 4 ? "age-warn" : "") + '">' + fmtAge(h) + "</span>" +
+      (m.assigned.length ? " · assigned to <b>" + esc(m.assigned.join(", ")) + "</b>" : " · not addressed to anyone in CS") +
+      (m.reason ? ' · <span class="reason">' + esc(m.reason) + "</span>" : "") + "</div></div>" +
+      '<a href="' + esc(m.webLink) + '" target="_blank" rel="noopener">Open ↗</a></div>';
+  }).join("");
+}
+
+let dayChart, repChart;
+function renderCharts() {
+  const days = {};
+  const { start, end } = rangeBounds();
+  const nDays = Math.min(31, Math.round((end - start) / 864e5));
+  for (let i = 0; i < nDays; i++) {
+    const d = new Date(start); d.setDate(d.getDate() + i);
+    days[d.toLocaleDateString(undefined,{weekday:"short",day:"numeric"})] = { critical:0, high:0, routine:0, low:0 };
+  }
+  for (const m of MESSAGES) {
+    const k = new Date(m.received).toLocaleDateString(undefined,{weekday:"short",day:"numeric"});
+    if (days[k]) days[k][m.prio]++;
+  }
+  const labels = Object.keys(days);
+  const mk = (p, color) => ({ label: PRIO_LABEL[p], data: labels.map(l => days[l][p]), backgroundColor: color, stack: "s" });
+  if (dayChart) dayChart.destroy();
+  dayChart = new Chart($("chart-days"), { type:"bar",
+    data:{ labels, datasets:[mk("critical","#dc2626"), mk("high","#f59e0b"), mk("routine","#6366f1"), mk("low","#d1d5db")] },
+    options:{ responsive:true, maintainAspectRatio:false, scales:{ x:{stacked:true}, y:{stacked:true, ticks:{precision:0}} }, plugins:{ legend:{position:"bottom", labels:{boxWidth:12}} } } });
+  const reps = {};
+  for (const m of MESSAGES) if (m.pickedUp) reps[m.rep] = (reps[m.rep] || 0) + 1;
+  const rl = Object.keys(reps).sort((a,b) => reps[b] - reps[a]);
+  if (repChart) repChart.destroy();
+  repChart = new Chart($("chart-reps"), { type:"bar",
+    data:{ labels: rl.length ? rl : ["No pickups yet"], datasets:[{ label:"Picked up", data: rl.length ? rl.map(r => reps[r]) : [0], backgroundColor:"#16a34a" }] },
+    options:{ indexAxis:"y", responsive:true, maintainAspectRatio:false, scales:{ x:{ticks:{precision:0}} }, plugins:{ legend:{display:false} } } });
+}
+
+function renderTable() {
+  const fp = $("f-priority").value, fs = $("f-status").value, fc = $("f-customer").value, ft = $("f-text").value.toLowerCase();
+  let rows = MESSAGES.filter(m =>
+    (!fp || m.prio === fp) &&
+    (!fs || (fs === "picked") === m.pickedUp) &&
+    (!fc || m.customer === fc) &&
+    (!ft || (m.subject + " " + m.sender + " " + m.customer).toLowerCase().includes(ft)));
+  rows.sort((a,b) => {
+    let v = 0;
+    if (sortKey === "prio") v = PRIO_ORDER[a.prio] - PRIO_ORDER[b.prio] || new Date(b.received) - new Date(a.received);
+    else if (sortKey === "received" || sortKey === "age") v = new Date(a.received) - new Date(b.received);
+    else if (sortKey === "sender") v = a.sender.localeCompare(b.sender);
+    else if (sortKey === "assigned") v = a.assigned.join(",").localeCompare(b.assigned.join(","));
+    else if (sortKey === "status") v = (a.pickedUp ? 1 : 0) - (b.pickedUp ? 1 : 0);
+    return sortAsc ? v : -v;
+  });
+  $("rows").innerHTML = rows.map(m => {
+    const h = ageHours(m);
+    return "<tr><td>" + prioBadge(m.prio) + "</td><td class='who'>" + fmtWhen(m.received) + "</td>" +
+      "<td class='" + (!m.pickedUp && (m.prio==="critical"||m.prio==="high") && h > 4 ? "age-warn" : "") + "'>" + fmtAge(h) + "</td>" +
+      "<td class='who'>" + esc(m.sender.split("@")[0]) + "<div class='sub'>" + esc(m.customer) + "</div></td>" +
+      "<td class='who'>" + (m.assigned.length ? esc(m.assigned.join(", ")) : "<span class='sub'>—</span>") + "</td>" +
+      "<td><div class='subj'>" + esc(m.subject) + "</div><div class='prev'>" + esc(m.preview || "") + "</div></td>" +
+      "<td>" + statusBadge(m) + (m.flagged ? " 🚩" : "") + "</td>" +
+      "<td><a href='" + esc(m.webLink) + "' target='_blank' rel='noopener'>Open ↗</a></td></tr>";
+  }).join("") || "<tr><td colspan='8' class='empty'>No messages match the filters.</td></tr>";
+}
+
+function restoreFilters() {
+  try {
+    const f = JSON.parse(localStorage.getItem("cs_filters") || "{}");
+    if (f.p) $("f-priority").value = f.p;
+    if (f.s) $("f-status").value = f.s;
+    if (f.c) { const o = document.createElement("option"); o.value = f.c; o.textContent = f.c; $("f-customer").appendChild(o); $("f-customer").value = f.c; }
+  } catch(e){}
+}
+function persistFilters() {
+  try { localStorage.setItem("cs_filters", JSON.stringify({ p:$("f-priority").value, s:$("f-status").value, c:$("f-customer").value })); } catch(e){}
+}
+
+let loading = false;
+async function main() {
+  if (loading) return;
+  loading = true;
+  try {
+    restoreFilters();
+    $("range-label").textContent = rangeLabel();
+    $("rows").innerHTML = "";
+    $("triage-list").innerHTML = '<div class="empty">Loading…</div>';
+    setStatus("Connecting…");
+    const list = await fetchMessageList();
+    MESSAGES = list.map(m => {
+      const cats = (m.categories || []).filter(Boolean);
+      const assigned = Array.isArray(m.assignedTo) ? m.assignedTo : [];
+      // picked up = a reply went out on the conversation (primary) or a category was applied (manual override)
+      const pickedUp = !!m.replied || cats.length > 0;
+      const rep = m.replied
+        ? (m.repliedBy || cats.join(", ") || assigned.join(", ") || "CS team")
+        : cats.join(", ");
+      return {
+        id: m.id, subject: m.subject || "(no subject)",
+        sender: m.sender || "unknown",
+        received: m.received, importance: m.importance || "normal",
+        preview: (m.preview || "").replace(/[​-‏͏‌]/g, "").trim(),
+        pickedUp, rep, assigned,
+        replied: !!m.replied, repliedAt: m.repliedAt || null,
+        customer: customerFromSender(m.sender),
+        flagged: !!m.flagged,
+        autoReply: !!m.autoReply,
+        webLink: m.webLink || "#"
+      };
+    });
+    await aiTriage(MESSAGES);
+    renderKPIs(); renderTriage(); renderCharts(); renderCustomers(); renderTable();
+    setStatus("Updated " + new Date().toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}) + " · " + MESSAGES.length + " messages" + (TRUNCATED ? " (capped — narrow the range)" : ""), false);
+  } catch (e) {
+    console.error(e);
+    setStatus("Load failed", false);
+    showErr("Could not load the mailbox.\n" + e.message + "\n\nCheck the Graph app registration and Vercel environment variables, then press Reload.");
+  } finally {
+    loading = false;
+  }
+}
+
+// ---- date range controls ----
+function initRangeControls() {
+  const r = getRange();
+  $("d-preset").value = ["0","3","6","13"].includes(r.preset) ? r.preset : "custom";
+  $("d-from").value = r.from; $("d-to").value = r.to;
+  $("d-custom").style.display = $("d-preset").value === "custom" ? "inline" : "none";
+  $("d-preset").addEventListener("change", () => {
+    const v = $("d-preset").value;
+    if (v === "custom") { $("d-custom").style.display = "inline"; return; }
+    $("d-custom").style.display = "none";
+    const from = new Date(); from.setDate(from.getDate() - parseInt(v, 10));
+    setRange({ preset: v, from: dstr(from), to: dstr(new Date()) });
+    $("err").style.display = "none";
+    main();
+  });
+  $("d-apply").addEventListener("click", () => {
+    let f = $("d-from").value, t = $("d-to").value;
+    if (!f || !t) return;
+    if (f > t) { const tmp = f; f = t; t = tmp; $("d-from").value = f; $("d-to").value = t; }
+    setRange({ preset: "custom", from: f, to: t });
+    $("err").style.display = "none";
+    main();
+  });
+}
+
+["f-priority","f-status","f-customer"].forEach(id => $(id).addEventListener("change", () => { persistFilters(); renderTable(); }));
+$("f-text").addEventListener("input", renderTable);
+document.querySelectorAll("th[data-k]").forEach(th => th.addEventListener("click", () => {
+  const k = th.dataset.k;
+  if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = true; }
+  renderTable();
+}));
+$("reload").addEventListener("click", () => { $("err").style.display = "none"; main(); });
+// Auto-refresh every 5 minutes while the tab is visible
+setInterval(() => { if (document.visibilityState === "visible") main(); }, 5 * 60 * 1000);
+initRangeControls();
+main();
+</script>
+</body>
+</html>
