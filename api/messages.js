@@ -28,7 +28,7 @@ async function getToken() {
 }
 
 const INTERNAL_DOMAINS = ['centralpharma.com', 'central-pharma.com'];
-const INBOX_SELECT = 'id,subject,from,toRecipients,receivedDateTime,importance,bodyPreview,categories,flag,webLink,conversationId';
+const INBOX_SELECT = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,importance,bodyPreview,categories,flag,webLink,conversationId';
 const SENT_SELECT = 'conversationId,sentDateTime,from,sender';
 const REPLY_SELECT = 'conversationId,receivedDateTime,from';
 
@@ -51,6 +51,11 @@ async function pageAll(startUrl, token, maxPages) {
   }
   return { items, truncated: !!url };
 }
+
+const isInternal = addr => {
+  const dom = String(addr || '').toLowerCase().split('@')[1] || '';
+  return INTERNAL_DOMAINS.some(d => dom === d || dom.endsWith('.' + d));
+};
 
 function firstName(a) {
   return (a.name || String(a.address || '').split('@')[0] || '').trim().split(/\s+/)[0];
@@ -113,9 +118,18 @@ export default async function handler(req, res) {
 
     const out = inbox.items.map(m => {
       const received = new Date(m.receivedDateTime);
-      const reply = (replies.get(m.conversationId) || [])
-        .filter(x => new Date(x.at) > received)
-        .sort((a, b) => new Date(a.at) - new Date(b.at))[0] || null;
+      // Outbound = one of our people writing to an external party with the CS mailbox copied in.
+      // It IS our reply, so it never needs a reply itself. Internal-only mail (all recipients
+      // internal) stays actionable, e.g. "please print page 9 x 5".
+      const fromAddr = String(m.from?.emailAddress?.address || '').toLowerCase();
+      const outbound = fromAddr !== mailbox && isInternal(fromAddr) &&
+        [...(m.toRecipients || []), ...(m.ccRecipients || [])]
+          .some(r => { const a = String(r.emailAddress?.address || ''); return a && !isInternal(a); });
+      const reply = outbound
+        ? { at: m.receivedDateTime, by: firstName(m.from.emailAddress) }
+        : (replies.get(m.conversationId) || [])
+          .filter(x => new Date(x.at) > received)
+          .sort((a, b) => new Date(a.at) - new Date(b.at))[0] || null;
       const assignedTo = [...new Set((m.toRecipients || [])
         .map(t => t.emailAddress || {})
         .filter(a => {
@@ -137,6 +151,7 @@ export default async function handler(req, res) {
         flagged: !!(m.flag && m.flag.flagStatus && m.flag.flagStatus !== 'notFlagged'),
         webLink: m.webLink || '#',
         assignedTo,
+        outbound,
         replied: !!reply,
         repliedAt: reply ? reply.at : null,
         repliedBy: reply ? reply.by : ''

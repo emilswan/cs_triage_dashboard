@@ -199,6 +199,7 @@ const isAutoReply = m => !!m.autoReply || AUTO_REPLY_SUBJECT.test(m.subject || "
 function ruleTriage(m) {
   const t = (m.subject + " " + (m.preview || "")).toLowerCase();
   if (isAutoReply(m)) return { p:"low", r:"Auto-reply / out of office" };
+  if (m.outbound) return { p:"low", r:"Our reply (sent by " + (m.rep || "Central Pharma") + ", CS copied)" };
   if (LOW_SENDERS.test(m.sender)) return { p:"low", r:"Automated notification" };
   if (m.importance === "high" || CRIT_WORDS.test(t)) return { p:"critical", r: m.importance==="high" ? "Marked high importance by sender" : "Critical keyword in subject/body" };
   if (HIGH_WORDS.test(t)) return { p:"high", r:"Time-sensitive wording" };
@@ -210,7 +211,7 @@ function saveTriageCache(c) { try { localStorage.setItem("cs_triage_cache", JSON
 
 async function aiTriage(msgs) {
   const cache = loadTriageCache();
-  const todo = msgs.filter(m => !cache[m.id] && !isAutoReply(m));
+  const todo = msgs.filter(m => !cache[m.id] && !isAutoReply(m) && !m.outbound);
   let aiEnabled = todo.length > 0;
   const BATCH = 20;
   for (let i = 0; i < todo.length; i += BATCH) {
@@ -233,7 +234,7 @@ async function aiTriage(msgs) {
   // Rule-based safety net: never let AI downgrade an explicit critical signal
   for (const m of msgs) {
     const rule = ruleTriage(m);
-    if (isAutoReply(m)) { m.prio = "low"; m.reason = rule.r; delete m._rule; continue; }
+    if (isAutoReply(m) || m.outbound) { m.prio = "low"; m.reason = rule.r; delete m._rule; continue; }
     let t = cache[m.id] || m._rule || rule;
     if (rule.p === "critical" && t.p !== "critical" && !LOW_SENDERS.test(m.sender)) t = rule;
     m.prio = t.p; m.reason = t.r;
@@ -309,6 +310,7 @@ function fmtAge(h) { return h < 1 ? Math.round(h*60) + "m" : h < 24 ? h.toFixed(
 function fmtWhen(iso) { const d = new Date(iso); return d.toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"}) + " " + d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }
 function prioBadge(p) { return '<span class="badge p-' + p + '">' + PRIO_LABEL[p] + "</span>"; }
 function statusBadge(m) {
+  if (m.outbound) return '<span class="badge s-picked">↗ Our reply' + (m.rep ? " · " + esc(m.rep) : "") + "</span>";
   if (m.replied) return '<span class="badge s-picked">✓ Replied' + (m.rep ? " · " + esc(m.rep) : "") + "</span>";
   if (m.pickedUp) return '<span class="badge s-picked">✓ ' + esc(m.rep) + "</span>";
   return '<span class="badge s-unassigned">No reply yet</span>';
@@ -436,6 +438,7 @@ async function main() {
         preview: (m.preview || "").replace(/[​-‏͏‌]/g, "").trim(),
         pickedUp, rep, assigned,
         replied: !!m.replied, repliedAt: m.repliedAt || null,
+        outbound: !!m.outbound,
         customer: customerFromSender(m.sender),
         flagged: !!m.flagged,
         autoReply: !!m.autoReply,
